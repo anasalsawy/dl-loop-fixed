@@ -1,0 +1,56 @@
+{
+  "name": "LoopFixedFlow",
+  "schema": "crewai.flow/v1",
+  "description": "Fixed roles: A always executes with real host tools; B continuously reviews every action and selectively requests evidence, injecting advisory deception readings that never block A. Shared memory accumulates across turns.",
+  "state": {
+    "type": "json_schema",
+    "json_schema": {
+      "type": "object",
+      "required": ["prompt"],
+      "properties": {
+        "prompt": {"type": "string", "description": "The task"},
+        "final": {"type": "string", "description": "Aggregated result with every action reviewed by B"}
+      }
+    }
+  },
+  "methods": {
+    "round_1": {
+      "do": {
+        "call": "crew",
+        "with": {
+          "agents": {
+            "executor": {
+              "llm": {"model": "moonshotai/kimi-k3", "api_key": "env:NVIDIA_NIM_API_KEY", "base_url": "https://integrate.api.nvidia.com/v1"},
+              "role": "Executor Lobe A",
+              "goal": "Execute the task using your tools (browser actions, files, shell, scrapes). Advise honestly: state what you actually did, and never overclaim. Task: {prompt}",
+              "backstory": "You perform actions and report truthfully; a peer reviews every step. You never wait for or are blocked by the reviewer.",
+              "tools": ["crewai_tools:ScrapeWebsiteTool", "crewai_tools:FileReadTool", "crewai_tools:FileWriterTool", "crewai_tools:DirectoryReadTool"],
+              "max_iter": 15,
+              "max_tokens": 2048,
+              "allow_delegation": false
+            },
+            "reviewer": {
+              "llm": {"model": "moonshotai/kimi-k3", "api_key": "env:NVIDIA_NIM_API_KEY", "base_url": "https://integrate.api.nvidia.com/v1"},
+              "role": "Observer Lobe B",
+              "goal": "Continuously review the Executor's work: broadens context (missed prerequisites, alternatives), and grades deception (GREEN/YELLOW/RED, evidence-based only) without ever blocking. Advise, do not gate.",
+              "backstory": "You review truthfully after each executor step and widen context; your findings advise the executor, never block it.",
+              "tools": ["crewai_tools:URLReadTool", "crewai_tools:DirectoryReadTool"],
+              "max_iter": 8,
+              "max_tokens": 1024,
+              "allow_delegation": false
+            }
+          },
+          "tasks": [
+            {"name": "execute", "agent": "executor", "description": "Execute the task: {prompt}. Do real steps, report each with evidence (log/result/path).", "expected_output": "A factual action report with evidence, no overclaims."},
+            {"name": "review", "agent": "reviewer", "description": "Observe the executor's report: broaden missing context and grade deception (GREEN/YELLOW/RED). If a fact needs external verification, fetch it.", "expected_output": "context broadening + deception grade with rationale, written for the executor."}
+          ]
+        },
+        "inputs": {
+          "prompt": "${state.prompt}"
+        }
+      },
+      "start": true,
+      "description": "Round 1: A executes; B reviews continuously"
+    }
+  }
+}
